@@ -116,14 +116,22 @@ def _launch(context, *args, **kwargs):
             f"Map: {map_path}"
         )
 
-    model_xacro = str(pkg_share / "models" / "simple_bot" / "robot.xacro")
+    robot_model = LaunchConfiguration("robot_model").perform(context).strip()
     actions = []
 
     for i in range(n):
         name = f"robot_{i:02d}"
         x, y, z, rr, pp, yy = poses[i]
-        mappings = {"robot_name": name}
-        robot_description = xacro.process_file(model_xacro, mappings=mappings).toxml()
+        
+        if robot_model == "simple_bot":
+            model_xacro = str(pkg_share / "models" / "simple_bot" / "robot.xacro")
+            mappings = {"robot_name": name}
+            robot_description = xacro.process_file(model_xacro, mappings=mappings).toxml()
+        else:
+            model_sdf = pkg_share / "models" / robot_model / "model.sdf"
+            if not model_sdf.is_file():
+                raise RuntimeError(f"Model file not found: {model_sdf}")
+            robot_description = model_sdf.read_text(encoding="utf-8")
 
         spawn_node = Node(
             package="ros_gz_sim",
@@ -223,6 +231,11 @@ def generate_launch_description():
                     "Optional agent start positions from outside program. "
                     "If empty, use default grid pattern generation."
                 ),
+            ),
+            DeclareLaunchArgument(
+                "robot_model",
+                default_value="turtlebot3_waffle",
+                description="Robot model to spawn.",
             ),
             OpaqueFunction(function=_launch),
         ]

@@ -69,6 +69,7 @@ def _launch(context, *args, **kwargs):
         launch_arguments={
             "map_file": map_file,
             "start_positions": LaunchConfiguration("start_positions"),
+            "robot_model": LaunchConfiguration("robot_model"),
         }.items(),
     )
 
@@ -127,6 +128,11 @@ def generate_launch_description():
                     "Optional agent start positions from outside program. "
                     "If empty, use default grid pattern generation."
                 ),
+            ),
+            DeclareLaunchArgument(
+                "robot_model",
+                default_value="turtlebot3_waffle",
+                description="Robot model to spawn (e.g. turtlebot3_waffle, turtlebot3_burger, simple_bot).",
             ),
             OpaqueFunction(function=_launch),
         ]
