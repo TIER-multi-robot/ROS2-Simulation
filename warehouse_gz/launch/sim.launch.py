@@ -10,6 +10,7 @@ from launch.actions import (
     OpaqueFunction,
     RegisterEventHandler,
     TimerAction,
+    AppendEnvironmentVariable,
 )
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -60,6 +61,11 @@ def _launch(context, *args, **kwargs):
         str(world_path),
     ]
 
+    set_env = AppendEnvironmentVariable(
+        name="GZ_SIM_RESOURCE_PATH",
+        value=str(pkg_share / "models")
+    )
+
     # command to launch gazebo with the generated world file
     gazebo_cmd = ["gz", "sim", "-r", str(world_path)]
 
@@ -88,6 +94,7 @@ def _launch(context, *args, **kwargs):
     )
 
     return [
+        set_env,
         gen_process,
         RegisterEventHandler(
             OnProcessExit(
