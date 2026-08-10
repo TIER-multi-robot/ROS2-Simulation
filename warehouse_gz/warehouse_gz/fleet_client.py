@@ -121,6 +121,7 @@ class FleetClient:
 
         self._lock = threading.Lock()
         self._positions: Dict[str, Tuple[float, float, float]] = {}
+        self._position_offsets: Dict[str, Tuple[float, float]] = {}
         self._goal_reached: Dict[str, bool] = {}
         self._goal_events: Dict[str, threading.Event] = {}
         self._goal_pubs: Dict[str, rclpy.publisher.Publisher] = {}
@@ -190,6 +191,7 @@ class FleetClient:
 
         with self._lock:
             self._positions.pop(name, None)
+            self._position_offsets.pop(name, None)
             self._goal_reached.pop(name, None)
             self._goal_events.pop(name, None)
         with self._task_lock:
@@ -250,6 +252,11 @@ class FleetClient:
                 f"No odom received for '{name}' within 20s — "
                 f"robot may not be ready yet"
             )
+
+        try:
+            self.set_grid_position_reference(name, row, col)
+        except RuntimeError:
+            pass
 
         with self._robot_lock:
             self._names.append(name)
@@ -335,19 +342,47 @@ class FleetClient:
         msg.poses = [pose]
         self._goal_pubs[robot_name].publish(msg)
 
+    def set_grid_position_reference(self, robot_name: str, row: int, col: int) -> None:
+        """Set a world-position offset for a robot using its expected grid cell.
+
+        Robot odom starts near (0, 0), so raw odom is local to the robot's
+        odom frame. This offset lets FleetClient convert local odom x/y into
+        global/world x/y before converting to a grid cell.
+        """
+        expected_x, expected_y = grid_cell_to_world_center(
+            row, col, self._origin, self._resolution, self._map_height
+        )
+
+        with self._lock:
+            if robot_name not in self._positions:
+                raise RuntimeError(f"No odometry received yet for {robot_name}")
+
+            raw_x, raw_y, _ = self._positions[robot_name]
+            self._position_offsets[robot_name] = (
+                expected_x - raw_x,
+                expected_y - raw_y,
+            )
+
     def get_position(self, robot_name: str) -> Tuple[float, float, float]:
-        """Return ``(x, y, yaw)`` for a robot.  Raises if no odom received yet."""
+        """Return corrected global/world ``(x, y, yaw)`` for a robot."""
         with self._lock:
             if robot_name not in self._positions:
                 raise RuntimeError(
                     f"No odometry received yet for {robot_name}"
                 )
-            return self._positions[robot_name]
+
+            raw_x, raw_y, yaw = self._positions[robot_name]
+            offset_x, offset_y = self._position_offsets.get(robot_name, (0.0, 0.0))
+            return (raw_x + offset_x, raw_y + offset_y, yaw)
 
     def get_all_positions(self) -> Dict[str, Tuple[float, float, float]]:
-        """Return positions for all robots that have reported odom."""
+        """Return corrected global/world positions for all robots that have reported odom."""
         with self._lock:
-            return dict(self._positions)
+            corrected = {}
+            for name, (raw_x, raw_y, yaw) in self._positions.items():
+                offset_x, offset_y = self._position_offsets.get(name, (0.0, 0.0))
+                corrected[name] = (raw_x + offset_x, raw_y + offset_y, yaw)
+            return corrected
         
     def get_map_info(self) -> Tuple[str, Tuple[int, int], float, List[float]]:
         """Returns the current simulations map information to ensure
@@ -368,8 +403,16 @@ class FleetClient:
             return self._goal_reached.get(robot_name, False)
         
     def send_grid_goal(self, robot_name: str, row: int, col: int) -> None:
-        position = grid_cell_to_world_center(row, col, self._origin, self._resolution, self._map_height)
-        self.send_goal(robot_name, position[0], position[1])
+        world_x, world_y = grid_cell_to_world_center(
+            row, col, self._origin, self._resolution, self._map_height
+        )
+
+        with self._lock:
+            offset_x, offset_y = self._position_offsets.get(robot_name, (0.0, 0.0))
+
+        goal_x = world_x - offset_x
+        goal_y = world_y - offset_y
+        self.send_goal(robot_name, goal_x, goal_y)
 
     def get_grid_position(self, robot_name: str) -> Tuple[int, int]:
         position = self.get_position(robot_name)
@@ -427,6 +470,16 @@ class FleetClient:
             start = datetime.datetime.now()
             res = Results(i, start, self._node.get_clock().now())
             active = {k: v for k, v in timestep.items() if k in self._names}
+
+            for robot_name, (row, col) in active.items():
+                with self._lock:
+                    has_offset = robot_name in self._position_offsets
+                if not has_offset:
+                    try:
+                        self.set_grid_position_reference(robot_name, row, col)
+                    except RuntimeError:
+                        pass
+
             complete = {robot: True for robot in active}
             completion_time = {r: 0.0 for r in active}
             pos_error = {rb: 0.0 for rb in active}
