@@ -139,7 +139,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "robot_model",
                 default_value="turtlebot3_waffle",
-                description="Robot model to spawn (e.g. turtlebot3_waffle, turtlebot3_burger, simple_bot).",
+                description="Robot model(s) to spawn. Can be a comma-separated list for a mixed fleet (e.g. misty_bot,turtlebot3_waffle).",
             ),
             OpaqueFunction(function=_launch),
         ]
