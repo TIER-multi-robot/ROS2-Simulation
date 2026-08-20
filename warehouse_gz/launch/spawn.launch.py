@@ -1,4 +1,5 @@
 import math
+import re
 from pathlib import Path
 
 import xacro
@@ -116,14 +117,58 @@ def _launch(context, *args, **kwargs):
             f"Map: {map_path}"
         )
 
-    model_xacro = str(pkg_share / "models" / "simple_bot" / "robot.xacro")
+    robot_models_str = LaunchConfiguration("robot_model").perform(context).strip()
+    robot_models = [m.strip() for m in robot_models_str.split(",") if m.strip()]
+    if not robot_models:
+        robot_models = ["turtlebot3_waffle"]
+    
     actions = []
 
     for i in range(n):
         name = f"robot_{i:02d}"
         x, y, z, rr, pp, yy = poses[i]
-        mappings = {"robot_name": name}
-        robot_description = xacro.process_file(model_xacro, mappings=mappings).toxml()
+        
+        current_model = robot_models[i % len(robot_models)]
+        
+        if current_model in ["simple_bot", "misty_bot"]:
+            if current_model == "simple_bot":
+                model_xacro = str(pkg_share / "models" / current_model / "robot.xacro")
+            else:
+                model_xacro = str(pkg_share / "models" / current_model / "urdf" / "misty.xacro")
+            mappings = {"robot_name": name}
+            robot_description = xacro.process_file(model_xacro, mappings=mappings).toxml()
+        else:
+            model_sdf = pkg_share / "models" / current_model / "model.sdf"
+            if not model_sdf.is_file():
+                raise RuntimeError(f"Model file not found: {model_sdf}")
+            robot_description = model_sdf.read_text(encoding="utf-8")
+            # Replace the SDF model name with the robot name.
+            robot_description = re.sub(
+                r'<model\s+name=["\'][^"\']*["\']',
+                f'<model name="{name}"',
+                robot_description,
+                count=1,
+            )
+
+        # Gazebo's DiffDrive plugin does not auto-scope relative
+        # topics to /model/<name>/..., so set absolute paths.
+        # This applies to both SDF and XACRO/URDF models.
+        robot_description = robot_description.replace(
+            '<odom_topic>odom</odom_topic>',
+            f'<odom_topic>/model/{name}/odom</odom_topic>',
+        )
+        robot_description = robot_description.replace(
+            '<topic>cmd_vel</topic>',
+            f'<topic>/model/{name}/cmd_vel</topic>',
+        )
+        robot_description = robot_description.replace(
+            '<topic>joint_states</topic>',
+            f'<topic>/model/{name}/joint_states</topic>',
+        )
+        robot_description = robot_description.replace(
+            '<tf_topic>/tf</tf_topic>',
+            f'<tf_topic>/model/{name}/tf</tf_topic>',
+        )
 
         spawn_node = Node(
             package="ros_gz_sim",
@@ -223,6 +268,11 @@ def generate_launch_description():
                     "Optional agent start positions from outside program. "
                     "If empty, use default grid pattern generation."
                 ),
+            ),
+            DeclareLaunchArgument(
+                "robot_model",
+                default_value="turtlebot3_waffle",
+                description="Robot model to spawn.",
             ),
             OpaqueFunction(function=_launch),
         ]

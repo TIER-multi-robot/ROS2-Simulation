@@ -10,6 +10,7 @@ from launch.actions import (
     OpaqueFunction,
     RegisterEventHandler,
     TimerAction,
+    AppendEnvironmentVariable,
 )
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -60,6 +61,11 @@ def _launch(context, *args, **kwargs):
         str(world_path),
     ]
 
+    set_env = AppendEnvironmentVariable(
+        name="GZ_SIM_RESOURCE_PATH",
+        value=str(pkg_share / "models")
+    )
+
     # command to launch gazebo with the generated world file
     gazebo_cmd = ["gz", "sim", "-r", str(world_path)]
 
@@ -69,6 +75,7 @@ def _launch(context, *args, **kwargs):
         launch_arguments={
             "map_file": map_file,
             "start_positions": LaunchConfiguration("start_positions"),
+            "robot_model": LaunchConfiguration("robot_model"),
         }.items(),
     )
 
@@ -87,6 +94,7 @@ def _launch(context, *args, **kwargs):
     )
 
     return [
+        set_env,
         gen_process,
         RegisterEventHandler(
             OnProcessExit(
@@ -127,6 +135,11 @@ def generate_launch_description():
                     "Optional agent start positions from outside program. "
                     "If empty, use default grid pattern generation."
                 ),
+            ),
+            DeclareLaunchArgument(
+                "robot_model",
+                default_value="turtlebot3_waffle",
+                description="Robot model(s) to spawn. Can be a comma-separated list for a mixed fleet (e.g. misty_bot,turtlebot3_waffle).",
             ),
             OpaqueFunction(function=_launch),
         ]
