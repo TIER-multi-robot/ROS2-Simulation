@@ -129,8 +129,9 @@ def _launch(context, *args, **kwargs):
         x, y, z, rr, pp, yy = poses[i]
         
         current_model = robot_models[i % len(robot_models)]
+        is_urdf_model = current_model in ["simple_bot", "misty_bot"]
         
-        if current_model in ["simple_bot", "misty_bot"]:
+        if is_urdf_model:
             if current_model == "simple_bot":
                 model_xacro = str(pkg_share / "models" / current_model / "robot.xacro")
             else:
@@ -191,19 +192,21 @@ def _launch(context, *args, **kwargs):
             ],
         )
 
-        node_robot_state_publisher = Node(
-            package="robot_state_publisher",
-            executable="robot_state_publisher",
-            namespace=name,
-            output="screen",
-            parameters=[
-                {
-                    "robot_description": robot_description,
-                    "use_sim_time": True,
-                    "frame_prefix": f"{name}/",
-                }
-            ],
-        )
+        node_robot_state_publisher = None
+        if is_urdf_model:
+            node_robot_state_publisher = Node(
+                package="robot_state_publisher",
+                executable="robot_state_publisher",
+                namespace=name,
+                output="screen",
+                parameters=[
+                    {
+                        "robot_description": robot_description,
+                        "use_sim_time": True,
+                        "frame_prefix": f"{name}/",
+                    }
+                ],
+            )
 
         bridge_node = Node(
             package="ros_gz_bridge",
@@ -224,15 +227,19 @@ def _launch(context, *args, **kwargs):
             ],
         )
 
+        timer_actions = [
+            LogInfo(msg=f"Spawning {name} at x={x:.3f}, y={y:.3f}, z={z:.3f}"),
+            spawn_node,
+            bridge_node,
+        ]
+
+        if node_robot_state_publisher is not None:
+            timer_actions.insert(2, node_robot_state_publisher)
+
         actions.append(
             TimerAction(
                 period=0.5 * i,
-                actions=[
-                    LogInfo(msg=f"Spawning {name} at x={x:.3f}, y={y:.3f}, z={z:.3f}"),
-                    spawn_node,
-                    node_robot_state_publisher,
-                    bridge_node,
-                ],
+                actions=timer_actions,
             )
         )
 
